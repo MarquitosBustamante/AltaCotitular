@@ -40,3 +40,9 @@ Regresión específica del cónyuge:
 ```sh
 python3 tests/spouse_smoke.py
 ```
+
+## PDF con datos pendientes
+
+En «Formulario completo», los datos ya cargados se imprimen y sus casillas se retiran. Las casillas originales sin datos se conservan como campos editables (texto, listas y grupos de opciones sin contestar), incluso las del cónyuge. Si un nombre de campo se reutiliza en distintos lugares, solo se retiran sus casillas ya impresas. Los campos internos de ID de apertura se siguen excluyendo. No se mantienen respuestas predeterminadas de la plantilla como si fueran datos aportados.
+
+La prueba `python3 tests/fillable_smoke.py` genera un PDF parcial, completa campos pendientes, guarda el archivo y verifica los valores al volver a abrirlo; también prueba el botón de descarga y la conservación del modo cliente.

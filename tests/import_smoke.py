@@ -58,6 +58,9 @@ async def main():
     await pg.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
     const png=canvas.toDataURL();await doc.loadingTask.destroy();
     const single=await PDFLib.PDFDocument.create(),source=await PDFLib.PDFDocument.load(out);
+    // Fixture aplanada real: solo texto impreso, sin widgets ni formulario.
+    source.getPages().forEach(p=>p.node.delete(PDFLib.PDFName.of('Annots')));
+    source.catalog.delete(PDFLib.PDFName.of('AcroForm'));
     single.addPage((await single.copyPages(source,[0]))[0]);
     return {pdf:Array.from(await single.save()),png};
   }''')

@@ -238,7 +238,7 @@
   <section aria-labelledby="t2">
     <h2 class="step-title" id="t2"><span class="n">2</span>Revisá los datos</h2>
     <div class="sheet">
-      <p class="sheet-intro">Los campos se completan al leer el mail. Podés corregir o completar cualquiera a mano.</p>
+      <p class="sheet-intro">Los campos se completan al leer el mail o un archivo. Podés corregirlos a mano. En el PDF descargado, los datos que falten quedan rellenables.</p>
       <div id="sheet"></div>
     </div>
   </section>
@@ -34109,6 +34109,73 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     };
   }
 
+  // Conserva cada casilla vacía, incluso cuando comparte nombre con otra ya impresa.
+  function keepEmptyFields(doc, PDFLib, layout, values, font) {
+    const { PDFName, PDFDict, PDFArray, PDFString, PDFHexString } = PDFLib;
+    const name = s => PDFName.of(s);
+    const dead = new Set();
+    const groups = {
+      'Check Box5': ['chk_indistinta', 'chk_conjunta'], 'Check Box6': ['chk_indistinta', 'chk_conjunta'],
+      'Check Box34': ['chk_rel_si', 'chk_rel_no'], 'Check Box35': ['chk_rel_si', 'chk_rel_no'],
+      'Check Box36': ['chk_or_act', 'chk_or_venta', 'chk_or_her', 'chk_or_otros'],
+      'Check Box37': ['chk_or_act', 'chk_or_venta', 'chk_or_her', 'chk_or_otros'],
+      'Check Box38': ['chk_or_act', 'chk_or_venta', 'chk_or_her', 'chk_or_otros'],
+      'Check Box39': ['chk_or_act', 'chk_or_venta', 'chk_or_her', 'chk_or_otros'],
+      'Check Box44': ['chk_so_si', 'chk_so_no'], 'Check Box45': ['chk_so_si', 'chk_so_no']
+    };
+    function fieldName(dict) {
+      let current = dict;
+      const seen = new Set();
+      while (current && !seen.has(current)) {
+        seen.add(current);
+        const t = current.get(name('T'));
+        if (t instanceof PDFString || t instanceof PDFHexString) return t.decodeText();
+        current = current.lookupMaybe(name('Parent'), PDFDict);
+      }
+      return '';
+    }
+    doc.getPages().forEach((page, index) => {
+      const annots = page.node.Annots();
+      if (!annots) return;
+      const keep = [];
+      for (const ref of annots.asArray()) {
+        const dict = doc.context.lookup(ref);
+        if (!(dict instanceof PDFDict) || dict.get(name('Subtype'))?.toString() !== '/Widget') { keep.push(ref); continue; }
+        const field = fieldName(dict);
+        const rect = dict.lookupMaybe(name('Rect'), PDFArray)?.asArray().map(n => n.asNumber());
+        const e = rect && layout.find(e => e.p === index + 1 && e.n === field && e.r.every((n, i) => Math.abs(n - rect[i]) < 1));
+        const answered = e && (safeText(valueFor(e, values)).trim() || (groups[e.n] || []).some(k => values[k]));
+        if (answered || field === 'Text33' || field === 'Text53') dead.add(ref.toString());
+        else keep.push(ref);
+      }
+      if (keep.length) page.node.set(name('Annots'), doc.context.obj(keep));
+      else page.node.delete(name('Annots'));
+    });
+    const acro = doc.catalog.lookupMaybe(name('AcroForm'), PDFDict);
+    const fields = acro?.lookupMaybe(name('Fields'), PDFArray);
+    if (!fields) return;
+    function prune(array) {
+      for (let i = array.size() - 1; i >= 0; i--) {
+        const ref = array.get(i), dict = doc.context.lookup(ref);
+        if (dead.has(ref.toString())) { array.remove(i); continue; }
+        const kids = dict instanceof PDFDict && dict.lookupMaybe(name('Kids'), PDFArray);
+        if (kids) { prune(kids); if (!kids.size()) array.remove(i); }
+      }
+    }
+    prune(fields);
+    if (!fields.size()) { doc.catalog.delete(name('AcroForm')); return; }
+    // Borra valores de ejemplo de la plantilla, como el «no» predeterminado de PEP.
+    // Se actualizan solo las apariencias de texto/listas; algunas casillas originales
+    // no tienen apariencia de encendido y no admiten la regeneración general de pdf-lib.
+    for (const field of doc.getForm().getFields()) {
+      field.acroField.dict.delete(name('DV'));
+      if (field instanceof PDFLib.PDFTextField) { field.setText(''); field.updateAppearances(font); }
+      else if (field instanceof PDFLib.PDFDropdown || field instanceof PDFLib.PDFOptionList) { field.clear(); field.updateAppearances(font); }
+      else if (field instanceof PDFLib.PDFCheckBox) field.uncheck();
+      else if (field instanceof PDFLib.PDFRadioGroup) field.clear();
+    }
+  }
+
   async function buildPdf(PDFLib, templateBytes, layout, V, letters) {
     const { PDFDocument, StandardFonts, rgb, PDFName } = PDFLib;
     const doc = await PDFDocument.load(templateBytes);
@@ -34135,21 +34202,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     const white = rgb(1, 1, 1);
     for (const a of SIGN_SPOTS) pages[a.p - 1].drawText(SIGN_ANCHOR, { x: a.x, y: a.y, size: 5, font, color: white });
 
-    // Se quitan los campos editables: el texto queda impreso y DocuSign lo muestra tal cual.
-    for (const page of pages) {
-      const annots = page.node.Annots();
-      if (!annots) continue;
-      const keep = [];
-      for (let i = 0; i < annots.size(); i++) {
-        const ref = annots.get(i);
-        const dict = doc.context.lookup(ref);
-        const st = dict && dict.get ? dict.get(PDFName.of('Subtype')) : null;
-        if (!(st && st.toString() === '/Widget')) keep.push(ref);
-      }
-      if (keep.length) page.node.set(PDFName.of('Annots'), doc.context.obj(keep));
-      else page.node.delete(PDFName.of('Annots'));
-    }
-    doc.catalog.delete(PDFName.of('AcroForm'));
+    keepEmptyFields(doc, PDFLib, layout, P, font);
 
     if (letters && letters.length) {
       const F = await letterFonts(doc, StandardFonts);
@@ -34161,7 +34214,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       };
       for (const L of letters) drawLetter(doc, L, D, F, rgb);
     }
-    return doc.save();
+    return doc.save({ updateFieldAppearances: false });
   }
 
   // --------------------------------------------- modo "para que complete el cliente"
@@ -34635,7 +34688,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     const items = errors.slice(0, 12).map(i => i.label + ': ' + i.msg);
     if (errors.length > 12) items.push('y ' + (errors.length - 12) + ' más.');
     return openDialog({ title: errors.length === 1 ? 'Falta 1 dato' : 'Faltan ' + errors.length + ' datos',
-      text: 'Si descargás igual, esos campos quedan vacíos o con datos para revisar en el PDF.',
+      text: 'Si descargás igual, los campos sin datos quedan rellenables en el PDF. Revisá y completá la información pendiente antes de firmar.',
       items, go: 'Descargar igual', back: 'Volver a completar', tone: 'miss' });
   }
 
