@@ -114,6 +114,13 @@
   .checks input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink); }
   .f.is-error .checks { padding: 0 12px; background: var(--miss-bg); border: 1px solid var(--miss); }
 
+  .additional-holders { display: grid; gap: 12px; margin-top: 14px; }
+  .additional-holders:empty { display: none; }
+  .additional-holder { border: 1px solid var(--rule); background: #FAFBFD; border-radius: 7px; padding: 13px; }
+  .additional-holder-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .additional-holder-head strong { color: var(--ink); font-size: 13px; }
+  .add-holder { margin-top: 14px; color: var(--ink); font-weight: 600; }
+
   /* 3 · control */
   .control { position: sticky; top: 16px; }
   .panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r); padding: 18px; box-shadow: var(--shadow); }
@@ -33543,7 +33550,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     lugar: 'CABA', fecha_firma: ''
   };
 
-  function emptyState(now) { return Object.assign({}, EMPTY, { fecha_firma: todayStr(now) }); }
+  function emptyState(now) { return Object.assign({}, EMPTY, { fecha_firma: todayStr(now), titulares_adicionales: [] }); }
 
   // Convierte los valores crudos del mail en el estado del formulario.
   function buildState(parsed, now) {
@@ -33731,6 +33738,19 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       if (notes && notes[f.k]) add(f.k, 'warn', notes[f.k]);
     }
 
+    (V.titulares_adicionales || []).forEach((holder, index) => {
+      const number = index + 2;
+      const check = (property, label) => {
+        const key = 'titular_extra_' + index + '_' + property;
+        const value = clean(holder[property]);
+        if (!value) issues.push({ k: key, level: 'error', msg: 'Falta completar.', section: 'cuenta', label });
+        else if (property === 'dni' && !/^\d{7,8}$/.test(digits(value)))
+          issues.push({ k: key, level: 'error', msg: 'El DNI tiene que tener 7 u 8 dígitos.', section: 'cuenta', label });
+      };
+      check('nombre', 'Nombre del titular ' + number);
+      check('dni', 'DNI del titular ' + number);
+    });
+
     const has = k => !!clean(V[k]);
     const dateCheck = k => { if (has(k) && !parseDate(V[k]).ok) add(k, 'error', 'La fecha no es válida. Usá dd/mm/aaaa.'); };
     dateCheck('fecha_apertura'); dateCheck('fecha_nac'); dateCheck('fecha_firma');
@@ -33882,12 +33902,38 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     return lines;
   }
 
+  // Los nombres se parten por palabras; una palabra extensa también se divide si hace falta.
+  function wrapHolderName(text, font, size, width) {
+    const words = safeText(clean(text)).split(' ').filter(Boolean), lines = [];
+    let line = '';
+    for (const word of words) {
+      let rest = word;
+      while (rest) {
+        const next = line ? line + ' ' + rest : rest;
+        if (font.widthOfTextAtSize(next, size) <= width) { line = next; break; }
+        if (line) { lines.push(line); line = ''; continue; }
+        let part = '';
+        for (const char of rest) {
+          if (part && font.widthOfTextAtSize(part + char, size) > width) break;
+          part += char;
+        }
+        if (!part) throw new Error('No se pudo ubicar el nombre de un titular.');
+        lines.push(part); rest = rest.slice(part.length);
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
   // Dibuja una carta de alta (BCV o BSGFCI) con el texto y las posiciones del Word original.
   function drawLetter(doc, L, D, F, rgb) {
     const page = doc.addPage(L.size);
     const size = 11, lh = 12.6, black = rgb(0, 0, 0);
     const blank = '____________';
-    const put = (text, x, y, font) => page.drawText(safeText(text), { x, y, size, font: font || F.r, color: black });
+    const putOn = (target, text, x, y, font, fontSize) => target.drawText(safeText(text), {
+      x, y, size: fontSize || size, font: font || F.r, color: black
+    });
+    const put = (text, x, y, font) => putOn(page, text, x, y, font);
 
     const nombreCot = clean(D.cot_nombre), dniCot = fmtDNI(D.cot_dni);
     const fecha = 'En ' + (clean(D.lugar) || 'CABA') + ', al ' + (longDate(D.fecha) || blank);
@@ -33898,24 +33944,100 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     const lines = wrapText(safeText(text), F.r, size, L.para.right - L.para.x);
     lines.forEach((ln, i) => put(ln, L.para.x, L.para.y - i * lh));
 
-    const shift = Math.max(0, lines.length - 3) * lh;       // si el párrafo crece, baja todo lo que sigue
+    const shift = Math.max(0, lines.length - 3) * lh;
     const dy = y => (y <= L.para.next + 1 ? y - shift : y);
-    for (const st of L.static) put(st.t, st.x, dy(st.y), F[st.s]);
-
-    const val = (key, value) => {
+    const val = (key, value, extraShift) => {
       const q = L.values[key];
       if (!q || !value) return;
       const t = safeText(value);
       let sz = size;
       while (F.r.widthOfTextAtSize(t, sz) > L.date.right - q.x && sz > 8) sz -= 0.25;
-      page.drawText(t, { x: q.x, y: dy(q.y), size: sz, font: F.r, color: black });
+      page.drawText(t, { x: q.x, y: dy(q.y) - (extraShift || 0), size: sz, font: F.r, color: black });
     };
-    val('titular_nombre', clean(D.titular_nombre));
-    val('titular_dni', fmtDNI(D.titular_dni));
-    val('cot_nombre', nombreCot);
-    val('cot_dni', dniCot);
 
-    page.drawText(SIGN_ANCHOR, { x: L.anchor.x, y: dy(L.anchor.y), size: 5, font: F.r, color: rgb(1, 1, 1) });
+    const holders = [{ nombre: D.titular_nombre, dni: D.titular_dni }].concat(D.titulares_adicionales || []);
+    if (holders.length === 1) {
+      // Conserva exactamente la carta original para el caso de un solo titular.
+      for (const st of L.static) put(st.t, st.x, dy(st.y), F[st.s]);
+      val('titular_nombre', clean(D.titular_nombre));
+      val('titular_dni', fmtDNI(D.titular_dni));
+      val('cot_nombre', nombreCot);
+      val('cot_dni', dniCot);
+      page.drawText(SIGN_ANCHOR, { x: L.anchor.x, y: dy(L.anchor.y), size: 5, font: F.r, color: rgb(1, 1, 1) });
+      return;
+    }
+
+    const sigIndex = L.static.findIndex(st => st.t === '_________________________');
+    const cotIndex = L.static.findIndex(st => st.t === 'DE CONFORMIDAD:');
+    if (sigIndex < 0 || cotIndex <= sigIndex) throw new Error('No se encontró la sección de firmas de la carta.');
+    for (const st of L.static.slice(0, sigIndex)) put(st.t, st.x, dy(st.y), F[st.s]);
+
+    const sig = L.static[sigIndex], sigLabel = L.static[sigIndex + 1],
+      nameLabel = L.static[sigIndex + 2], dniLabel = L.static[sigIndex + 3];
+    const left = sig.x, gap = 20, colWidth = (L.date.right - left - gap) / 2;
+    const columns = [left, left + colWidth + gap];
+    const nameOffset = sig.y - L.values.titular_nombre.y;
+    const dniOffset = sig.y - L.values.titular_dni.y;
+    const dniTextOffset = L.values.titular_dni.x - left;
+
+    const measureRow = (pair, y) => {
+      const names = pair.map(holder => wrapHolderName(holder.nombre, F.r, size, colWidth));
+      const nameLines = Math.max(1, ...names.map(name => name.length));
+      return { pair, y, names, dniY: y - dniOffset - (nameLines - 1) * lh };
+    };
+    const paintRow = (target, row) => {
+      row.pair.forEach((holder, col) => {
+        const x = columns[col];
+        putOn(target, sig.t, x, row.y, F[sig.s]);
+        putOn(target, sigLabel.t, x, row.y - (sig.y - sigLabel.y), F[sigLabel.s]);
+        putOn(target, nameLabel.t, x, row.y - (sig.y - nameLabel.y), F[nameLabel.s]);
+        row.names[col].forEach((line, j) => putOn(target, line, x, row.y - nameOffset - j * lh, F.r));
+        putOn(target, dniLabel.t, x, row.dniY, F[dniLabel.s]);
+        const dni = fmtDNI(holder.dni);
+        if (dni) putOn(target, dni, x + dniTextOffset, row.dniY, F.r);
+      });
+    };
+
+    const originalCotY = dy(L.static[cotIndex].y);
+    const cotBottomOffset = L.static[cotIndex].y - Math.min(
+      ...L.static.slice(cotIndex).map(st => st.y), L.values.cot_nombre.y, L.values.cot_dni.y
+    );
+    const rows = [];
+    let count = 0, cursorY = dy(sig.y), cotY = originalCotY;
+    while (count < holders.length && rows.length < 2) {
+      const row = measureRow(holders.slice(count, count + 2), cursorY);
+      const nextCotY = Math.min(originalCotY, row.dniY - 48);
+      if (nextCotY - cotBottomOffset < 55) {
+        if (!rows.length) throw new Error('El nombre de un titular es demasiado largo para la carta.');
+        break;
+      }
+      rows.push(row); count += row.pair.length; cotY = nextCotY;
+      cursorY = row.dniY - 60;
+    }
+    rows.forEach(row => paintRow(page, row));
+    const cotMove = originalCotY - cotY;
+    for (const st of L.static.slice(cotIndex)) put(st.t, st.x, dy(st.y) - cotMove, F[st.s]);
+    val('cot_nombre', nombreCot, cotMove);
+    val('cot_dni', dniCot, cotMove);
+    page.drawText(SIGN_ANCHOR, { x: L.anchor.x, y: dy(L.anchor.y) - cotMove, size: 5, font: F.r, color: rgb(1, 1, 1) });
+
+    // Si no entran todos, continúa cada carta en páginas identificadas, sin perder firmas.
+    while (count < holders.length) {
+      const continuation = doc.addPage(L.size);
+      const letter = L.acct === 'comitente' ? 'BCV - Cuenta comitente' : 'BSGFCI - Cuenta cuotapartista';
+      putOn(continuation, 'Continuación de firmas de titulares', left, 746, F.b);
+      putOn(continuation, letter + ' N° ' + (clean(D[L.acct]) || blank), left, 727, F.r);
+      let y = 662, added = 0;
+      while (count < holders.length) {
+        const row = measureRow(holders.slice(count, count + 2), y);
+        if (row.dniY < 65) {
+          if (!added) throw new Error('El nombre de un titular es demasiado largo para la hoja de firmas.');
+          break;
+        }
+        paintRow(continuation, row);
+        count += row.pair.length; added += row.pair.length; y = row.dniY - 60;
+      }
+    }
   }
 
   const WIN_EXTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
@@ -33991,6 +34113,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       const D = {
         lugar: V.lugar, fecha: V.fecha_firma, cot_nombre: P.aclaracion, cot_dni: P.dni,
         titular_nombre: V.titular_nombre, titular_dni: V.titular_dni,
+        titulares_adicionales: V.titulares_adicionales || [],
         comitente: P.comitente, cuotapartista: P.cuotapartista
       };
       for (const L of letters) drawLetter(doc, L, D, F, rgb);
@@ -34215,6 +34338,17 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
         el('div', { class: 'sec-head' }, [el('h3', { id: 'h-' + s.id, text: s.title }), count]), grid
       ]);
       for (const f of s.fields) grid.appendChild(buildField(f));
+      if (s.id === 'cuenta') {
+        sec.appendChild(el('div', { id: 'additional-holders', class: 'additional-holders' }));
+        const add = el('button', { type: 'button', class: 'btn add-holder', id: 'add-holder', text: '+ Agregar titular' });
+        add.addEventListener('click', () => {
+          touched = true;
+          V.titulares_adicionales.push({ nombre: '', dni: '' });
+          renderAdditionalHolders(); refresh();
+          controls['titular_extra_' + (V.titulares_adicionales.length - 1) + '_nombre'].focus();
+        });
+        sec.appendChild(add);
+      }
       root.appendChild(sec);
     }
   }
@@ -34261,6 +34395,36 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     return wrap;
   }
 
+  function renderAdditionalHolders() {
+    const root = $('additional-holders');
+    root.textContent = '';
+    for (const key of Object.keys(controls)) if (key.startsWith('titular_extra_')) delete controls[key];
+    (V.titulares_adicionales || []).forEach((holder, index) => {
+      const number = index + 2;
+      const field = (property, label, width) => {
+        const key = 'titular_extra_' + index + '_' + property;
+        const input = el('input', { id: 'f-' + key, type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'm-' + key });
+        input.value = holder[property] || '';
+        if (property === 'dni') input.inputMode = 'numeric';
+        input.addEventListener('input', () => { touched = true; V.titulares_adicionales[index][property] = input.value; refresh(); });
+        controls[key] = input;
+        return el('div', { class: 'f' + (width ? ' w' + width : ''), id: 'wrap-' + key }, [
+          el('label', { for: 'f-' + key, text: label }), input, el('div', { class: 'msg', id: 'm-' + key })
+        ]);
+      };
+      const remove = el('button', { type: 'button', class: 'btn quiet', text: 'Quitar', 'aria-label': 'Quitar titular ' + number });
+      remove.addEventListener('click', () => {
+        V.titulares_adicionales.splice(index, 1);
+        touched = true; renderAdditionalHolders(); refresh();
+        $('add-holder').focus();
+      });
+      root.appendChild(el('div', { class: 'additional-holder' }, [
+        el('div', { class: 'additional-holder-head' }, [el('strong', { text: 'Titular ' + number }), remove]),
+        el('div', { class: 'grid' }, [field('nombre', 'Nombre del titular ' + number, 3), field('dni', 'DNI del titular ' + number)])
+      ]));
+    });
+  }
+
   function onEdit(k, value) {
     touched = true;
     V[k] = value;
@@ -34284,6 +34448,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       if (f.type === 'checks') f.opts.forEach(([key]) => { controls[key].checked = !!V[key]; });
       else controls[f.k].value = f.k === 'cuil' ? C._test.fmtCUIL(V.cuil) : (V[f.k] || '');
     }
+    renderAdditionalHolders();
   }
 
   // ------------------------------------------------------------------- estado
@@ -34303,6 +34468,16 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       $('m-' + f.k).textContent = i ? i.msg : '';
       if (ctl) ctl.setAttribute('aria-invalid', i && i.level === 'error' ? 'true' : 'false');
     }
+    (V.titulares_adicionales || []).forEach((holder, index) => {
+      for (const property of ['nombre', 'dni']) {
+        const key = 'titular_extra_' + index + '_' + property;
+        const w = $('wrap-' + key), i = byField[key], ctl = controls[key];
+        w.classList.toggle('is-error', !!i && i.level === 'error');
+        w.classList.toggle('is-warn', !!i && i.level === 'warn');
+        $('m-' + key).textContent = i ? i.msg : '';
+        ctl.setAttribute('aria-invalid', i && i.level === 'error' ? 'true' : 'false');
+      }
+    });
     for (const s of C.SECTIONS) {
       const n = issues.filter(i => i.section === s.id && i.level === 'error').length;
       const c = $('count-' + s.id);
@@ -34359,6 +34534,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     if (!text.trim()) { msg.className = 'hint bad'; msg.textContent = 'Pegá el mail antes de leer los datos.'; $('src').focus(); return; }
     const parsed = C.parseText(text);
     const built = C.buildState(parsed);
+    built.V.titulares_adicionales = V.titulares_adicionales || [];
     V = built.V; notes = built.notes; unknown = parsed.unknown; touched = true;
     syncForm();
     const { errors } = refresh();
@@ -34393,7 +34569,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
   }
 
   async function clearAll() {
-    const hasData = $('src').value.trim() || Object.keys(V).some(k => V[k] && k !== 'lugar' && k !== 'fecha_firma');
+    const hasData = $('src').value.trim() || Object.keys(V).some(k => k === 'titulares_adicionales' ? V[k].length > 0 : V[k] && k !== 'lugar' && k !== 'fecha_firma');
     if (hasData && !(await openDialog({ title: '¿Borrar todo?', text: 'Se vacían el mail y todos los datos cargados.', go: 'Borrar todo', back: 'Cancelar' }))) return;
     $('src').value = '';
     V = C.emptyState(); notes = {}; unknown = []; touched = false;
