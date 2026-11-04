@@ -177,6 +177,20 @@
   @media (prefers-reduced-motion: no-preference) {
     .f input, .f select, .btn { transition: border-color .12s, box-shadow .12s, background-color .12s; }
   }
+  .import-box { background: #fff; border: 1px solid var(--rule-strong); border-radius: 8px; padding: 14px; display: grid; gap: 10px; margin-bottom: 16px; }
+  .import-box p { margin: 0; font-size: 12.5px; color: var(--muted); }
+  .import-box input, .import-box select { width: 100%; min-width: 0; }
+  .import-box select { padding: 8px; border: 1px solid var(--rule-strong); border-radius: 5px; background: white; }
+  .import-box label { font-size: 13px; }
+  .mail-title { font-size: 14px; margin: 12px 0 8px; }
+  .paste { position: static; }
+  .paste textarea { height: 260px; min-height: 160px; }
+  #import-review { width: min(760px, calc(100vw - 24px)); max-height: 90vh; }
+  #import-results { max-height: 55vh; overflow-y: auto; margin: 16px 0; }
+  .import-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr); gap: 8px; padding: 12px 2px; border-bottom: 1px solid var(--rule); }
+  .import-row small { grid-column: 1 / -1; color: var(--muted); overflow-wrap: anywhere; }
+  .import-row input[type=checkbox] { accent-color: var(--ink); }
+  .import-value { width: 100%; min-width: 0; padding: 7px; border: 1px solid var(--rule-strong); border-radius: 5px; }
 </style>
 </head>
 <body>
@@ -184,9 +198,9 @@
   <div class="top-inner">
     <div>
       <h1>Alta de cotitular</h1>
-      <p id="subtitle">Pegá el mail, revisá los datos y descargá el formulario listo para firmar en DocuSign.</p>
+      <p id="subtitle">Cargá el formulario del cliente o pegá el mail, revisá los datos y descargá el PDF listo para DocuSign.</p>
     </div>
-    <p class="offline">Funciona sin conexión. Los datos no salen de esta computadora.</p>
+    <p class="offline">Los archivos se procesan en tu navegador. Tus datos no se envían.</p>
   </div>
   <nav class="modes" role="tablist" aria-label="Herramienta">
     <button type="button" class="mode on" id="tab-full" role="tab" aria-selected="true" aria-controls="mode-full">
@@ -198,7 +212,19 @@
 
 <main class="layout" id="mode-full" role="tabpanel" aria-labelledby="tab-full">
   <section class="paste" aria-labelledby="t1">
-    <h2 class="step-title" id="t1"><span class="n">1</span>Pegá el mail</h2>
+    <h2 class="step-title" id="t1"><span class="n">1</span>Cargá la información</h2>
+    <div class="import-box">
+      <label for="import-files"><strong>Leer un formulario ya completado</strong></label>
+      <p id="import-help">Cargá el PDF del cliente o imágenes JPG, PNG o WebP. Recuperamos los datos disponibles para que los revises. En imágenes, usá la hoja completa, derecha y nítida.</p>
+      <input id="import-files" type="file" accept=".pdf,image/jpeg,image/png,image/webp" multiple aria-describedby="import-help">
+      <label for="import-page">Página del formulario (para imágenes o un PDF de una sola página)</label>
+      <select id="import-page"><option value="1">1 · Datos personales</option><option value="2">2 · Perfil de inversión</option><option value="3">3 · Residencia fiscal / FATCA</option><option value="4">4 · Sujeto obligado</option><option value="5">5 · PEP</option><option value="20">20 · Datos personales FCI</option><option value="21">21 · Perfil FCI</option><option value="22">22 · Residencia fiscal / FATCA FCI</option><option value="23">23 · Sujeto obligado FCI</option><option value="24">24 · PEP FCI</option></select>
+      <button type="button" id="import-read" class="btn primary">Leer archivos</button>
+      <button type="button" id="import-cancel" class="btn" hidden>Cancelar lectura</button>
+      <p id="import-status" role="status" aria-live="polite">Los archivos se leen en este navegador. No se envían a ningún servidor.</p>
+      <p class="hint">El PDF nuevo repetirá los datos donde corresponda, incluidas las páginas 1 y 20. Los datos ausentes quedan para completar. No se copian firmas del documento anterior.</p>
+    </div>
+    <h3 class="mail-title">O pegá el mail</h3>
     <label for="src" class="sr-only">Texto del mail</label>
     <textarea id="src" spellcheck="false" placeholder="Pegá la respuesta del cliente junto con el bloque DATOS DE LA CUENTA."></textarea>
     <button type="button" class="btn primary read" id="btn-read">Leer datos</button>
@@ -253,6 +279,14 @@
 
 <p class="foot">Formulario: BCV - BSGFCI - Alta cotitular 1 PF, versión 16/01/2025. Si Balanz cambia el formulario, hay que actualizar esta herramienta.</p>
 
+<dialog id="import-review" aria-labelledby="import-title">
+  <div class="dlg">
+    <h2 id="import-title">Revisá los datos del archivo</h2>
+    <p id="import-summary"></p>
+    <div id="import-results"></div>
+    <div class="row"><button type="button" id="import-back" class="btn">Descartar</button><button type="button" id="import-apply" class="btn primary">Aplicar datos seleccionados</button></div>
+  </div>
+</dialog>
 <dialog id="dlg" aria-labelledby="dlg-title">
   <div class="dlg">
     <h2 id="dlg-title"></h2>
@@ -34732,7 +34766,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
   }
 
   const SUBTITLES = {
-    full: 'Pegá el mail, revisá los datos y descargá el formulario listo para firmar en DocuSign.',
+    full: 'Cargá el formulario del cliente o pegá el mail, revisá los datos y descargá el PDF listo para DocuSign.',
     blank: 'Completá los números de cuenta y los datos de titular y cotitular. El resto lo completa el cliente.'
   };
 
@@ -34753,8 +34787,17 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
   $('tab-full').addEventListener('click', () => setMode('full'));
   $('tab-blank').addEventListener('click', () => setMode('blank'));
 
-  window.AltaUI = { readData, generate, generateBlank, setMode, state: () => V, blankState: () => B };
+  function applyImported(changes) {
+    for (const [key, value] of Object.entries(changes)) {
+      if (Object.prototype.hasOwnProperty.call(V, key) && key !== 'titulares_adicionales') {
+        V[key] = value; delete notes[key];
+      }
+    }
+    touched = true; syncForm(); refresh();
+  }
+  window.AltaUI = { readData, generate, generateBlank, setMode, applyImported, state: () => V, blankState: () => B };
 })();
 </script>
+<script src="assets/import/import.js"></script>
 </body>
 </html>
