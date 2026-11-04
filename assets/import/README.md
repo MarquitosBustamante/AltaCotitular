@@ -46,3 +46,9 @@ python3 tests/spouse_smoke.py
 En «Formulario completo», los datos ya cargados se imprimen y sus casillas se retiran. Las casillas originales sin datos se conservan como campos editables (texto, listas y grupos de opciones sin contestar), incluso las del cónyuge. Si un nombre de campo se reutiliza en distintos lugares, solo se retiran sus casillas ya impresas. Los campos internos de ID de apertura se siguen excluyendo. No se mantienen respuestas predeterminadas de la plantilla como si fueran datos aportados.
 
 La prueba `python3 tests/fillable_smoke.py` genera un PDF parcial, completa campos pendientes, guarda el archivo y verifica los valores al volver a abrirlo; también prueba el botón de descarga y la conservación del modo cliente.
+
+## Titular en las cartas finales
+
+El importador también recorre páginas fuera del listado `LAYOUT`. En las cartas de alta busca «Aclaración» y «DNI» del bloque «Firma del Titular», sin usar el bloque inferior del cotitular ni el contenido de una firma. Lee texto impreso, valores de campos editables y cartas finales escaneadas mediante OCR. El nombre y DNI del titular principal pasan por la misma revisión que los demás campos; las discrepancias entre cartas o respecto de datos ya cargados no se seleccionan automáticamente. Al generar se sigue usando la plantilla limpia: no se copian firmas del documento cargado.
+
+La prueba `python3 tests/letters_smoke.py` cubre un PDF con firma sintética, cartas separadas, campos editables, escaneo, titular ausente y discrepancias entre las cartas.

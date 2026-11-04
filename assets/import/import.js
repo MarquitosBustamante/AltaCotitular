@@ -46,6 +46,44 @@
       if (value && (e.t !== 'Btn' || /^[xX✓✔]$/.test(value))) add(key, value, source + (parts.some(i=>i.confidence != null && i.confidence<55) ? ' · Baja confianza' : ''));
     }
   }
+  // Usa los rótulos de la carta, no la firma ni el nombre del cotitular del bloque inferior.
+  function readLetterHolder(items, add, source) {
+    const ordered = [...items].sort((a,b) => Math.abs(a.y-b.y)>4 ? b.y-a.y : a.x-b.x);
+    function linesOf(parts) {
+      const lines = [];
+      for (const item of parts) {
+        let line = lines.find(l=>Math.abs(l.y-item.y)<4);
+        if (!line) { line={y:item.y,x:item.x,parts:[]};lines.push(line); }
+        line.parts.push(item);line.x=Math.min(line.x,item.x);
+      }
+      return lines.map(l=>({...l,text:clean(l.parts.sort((a,b)=>a.x-b.x).map(i=>i.text).join(' '))})).sort((a,b)=>b.y-a.y);
+    }
+    const lines = linesOf(ordered);
+    const marker = lines.find(l=>/firmadeltitular/.test(norm(l.text)) && !/firmadelcotitular/.test(norm(l.text)));
+    const continuation = lines.some(l=>norm(l.text).includes('continuaciondefirmasdetitulares'));
+    const letter = lines.some(l=>norm(l.text).includes('altacotitularidad')) || continuation;
+    if (!letter || !marker) return false;
+    // Si hay columnas de titulares, la primera corresponde al titular principal.
+    const sameRowMarkers = items.filter(i=>Math.abs(i.y-marker.y)<4 && /firmadeltitular/.test(norm(i.text))).sort((a,b)=>a.x-b.x);
+    const left = sameRowMarkers[0]?.x ?? marker.x;
+    const right = sameRowMarkers[1]?.x ?? Infinity;
+    const block = linesOf(ordered.filter(i=>i.x>=left-5 && i.x<right-8 && i.y<marker.y-3 && i.y>marker.y-170));
+    const acl = block.find(l=>/^aclaracion/.test(norm(l.text)));
+    if (!acl) return false;
+    const dniRegex = /^(?:D\s*\.?\s*N\s*\.?\s*I\s*\.?|documento)\s*:?\s*/i;
+    const dniLine = block.find(l=>l.y<acl.y+2 && dniRegex.test(l.text));
+    if (!dniLine) return false;
+    const nameLines = block.filter(l=>l.y<=acl.y+2 && l.y>dniLine.y+4);
+    const holderName = clean(nameLines.map(l=>l===acl ? l.text.replace(/^aclaraci[oó]n\s*:?\s*/i,'') : l.text).join(' '));
+    const inlineDni = dniLine.text.replace(dniRegex,'');
+    const belowDni = block.find(l=>l.y<dniLine.y-3 && l.y>dniLine.y-24 && /^[\d.\s-]+$/.test(l.text));
+    const holderDni = clean(inlineDni || belowDni?.text || '');
+    const confidence = [...nameLines,dniLine].flatMap(l=>l.parts).some(i=>i.confidence!=null && i.confidence<55) ? ' · Baja confianza' : '';
+    const origin = source+' · Carta de titularidad'+confidence;
+    if (holderName && /[a-záéíóúñü]/i.test(holderName) && !/[_/]|firma|conformidad/i.test(holderName)) add('titular_nombre',holderName,origin);
+    if (/^\d{7,8}$/.test(holderDni.replace(/[.\s-]/g,''))) add('titular_dni',holderDni,origin);
+    return true;
+  }
   function collect() {
     const found = new Map();
     return {
@@ -58,7 +96,7 @@
       }
     };
   }
-  async function ocr(canvas, pageNo, add) {
+  async function ocr(canvas, pageNo, add, letterSize = null) {
     status('Reconociendo texto de la página ' + pageNo + '… Puede tardar unos segundos.');
     if (!window.Tesseract) {
       await new Promise((resolve, reject) => {
@@ -83,6 +121,11 @@
       for (const b of result.data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) for (const w of l.words || []) {
         words.push({text:w.text, x:w.bbox.x0, y:w.bbox.y1, w:w.bbox.x1-w.bbox.x0, h:w.bbox.y1-w.bbox.y0, confidence:w.confidence});
       }
+      if (letterSize) {
+        const items=words.map(w=>({...w,x:w.x/canvas.width*letterSize.width,y:(1-w.y/canvas.height)*letterSize.height,w:w.w/canvas.width*letterSize.width}));
+        readLetterHolder(items,add,'Imagen/OCR · pág. '+pageNo+' (revisar)');
+        return;
+      }
       const tp = await (await getTemplate()).getPage(pageNo);
       const vp = tp.getViewport({scale:1});
       const statics = await pageItems(tp);
@@ -92,6 +135,7 @@
         const tokens=i.text.split(' '); let offset=0;
         return tokens.map(t => {const item={text:t,x:i.x+offset/i.text.length*i.w,y:i.y};offset+=t.length+1;return item;});
       });
+      if (readLetterHolder(items,add,'Imagen/OCR · pág. '+pageNo+' (revisar)')) return;
       const matches = items.filter(i => staticWords.some(t => norm(t.text)===norm(i.text) && Math.abs(t.x-i.x)<15 && Math.abs(t.y-i.y)<8)).length;
       if (matches < 12) throw new Error('No pude ubicar el formulario en la imagen. Usá la hoja completa, derecha y nítida, y comprobá el número de página seleccionado.');
       let values=items.filter(i => i.confidence > 0 && !staticWords.some(t => norm(t.text)===norm(i.text) && Math.abs(t.x-i.x)<15 && Math.abs(t.y-i.y)<8));
@@ -124,11 +168,28 @@
         checkCancel();
         const pageNo=doc.numPages===1 ? Number($('import-page').value) : n;
         const layout=window.LAYOUT.filter(e=>e.p===pageNo);
-        if (!layout.length) continue;
         status('Leyendo página '+n+' de '+doc.numPages+'…');
-        const page=await doc.getPage(n), tp=await original.getPage(pageNo);
-        const items=await pageItems(page), statics=await pageItems(tp);
+        const page=await doc.getPage(n), items=await pageItems(page);
         const annotations=await page.getAnnotations();
+        const letterItems=[...items];
+        for (const a of annotations) {
+          if (!['Tx','Ch'].includes(a.fieldType) || !a.rect || !a.fieldValue) continue;
+          const value=clean(Array.isArray(a.fieldValue) ? a.fieldValue.join(' ') : a.fieldValue);
+          const x=a.rect[0]+2,y=a.rect[1]+2;
+          if (value && !items.some(i=>norm(i.text)===norm(value) && Math.abs(i.x-x)<20 && Math.abs(i.y-y)<15)) letterItems.push({text:value,x,y,w:a.rect[2]-a.rect[0],h:a.rect[3]-a.rect[1]});
+        }
+        const letterRead=readLetterHolder(letterItems,add,'Texto PDF · pág. '+n);
+        if (!layout.length || pageNo>original.numPages) {
+          // Las cartas pueden estar fuera de LAYOUT y también llegar escaneadas.
+          if (!letterRead && n>=doc.numPages-1) {
+            const viewport=page.getViewport({scale:2.5}), size=page.getViewport({scale:1});
+            const canvas=document.createElement('canvas');canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
+            await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+            await ocr(canvas,n,add,size);canvas.width=canvas.height=0;
+          }
+          page.cleanup();continue;
+        }
+        const tp=await original.getPage(pageNo), statics=await pageItems(tp);
         const defaults=await tp.getAnnotations();
         let fields=0;
         for (const a of annotations) {
