@@ -187,7 +187,7 @@
       }
       // No se deducen nombres, titularidad, fechas, declaraciones fiscales ni valores ausentes.
       if (key==='aclaracion' || key==='lugar_fecha' || key==='pais1') continue;
-      const dest={nit1:'cuil',pais2:'pais_ext',nit2:'nit_ext'}[key] || key;
+      const dest={nit1:'cuil',pais2:'pais_ext',nit2:'nit_ext',conyuge_tipo:'conyuge_tipo_doc'}[key] || key;
       if (!(dest in labels)) continue;
       const built=C.buildState({raw:{[dest]:value},unknown:[],count:1});
       let converted=built.V[dest];

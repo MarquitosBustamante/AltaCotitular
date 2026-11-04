@@ -33409,6 +33409,10 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     'cuil o cuit': 'cuil', 'cuit o cuil': 'cuil', 'cuil/cuit': 'cuil', 'cuit/cuil': 'cuil', 'cuil': 'cuil', 'cuit': 'cuil',
     'estado civil': 'estado_civil',
     'apellido del conyuge': 'conyuge_apellido', 'nombre del conyuge': 'conyuge_nombre', 'dni del conyuge': 'conyuge_dni',
+    'apellidos del conyuge': 'conyuge_apellido', 'apellido conyuge': 'conyuge_apellido',
+    'nombres del conyuge': 'conyuge_nombre', 'nombre conyuge': 'conyuge_nombre',
+    'tipo de documento del conyuge': 'conyuge_tipo_doc', 'tipo de documento conyuge': 'conyuge_tipo_doc',
+    'numero de documento del conyuge': 'conyuge_dni', 'documento del conyuge': 'conyuge_dni',
     'domicilio': 'domicilio', 'direccion': 'domicilio', 'domicilio particular': 'domicilio',
     'localidad': 'localidad', 'provincia': 'provincia', 'pais': 'pais',
     'codigo postal': 'cp', 'cp': 'cp',
@@ -33520,7 +33524,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       if (section === 'laboral' && LABORAL_REMAP[key]) key = LABORAL_REMAP[key];
       if (value && !raw[key]) { raw[key] = value; count++; }
     }
-    return { raw, unknown, count };
+    return { raw, unknown, count, spouseDNI: preprocess(text).some(line => { const i = splitColon(line); return i >= 0 && normLabel(line.slice(0, i)) === 'dni del conyuge' && clean(line.slice(i + 1)); }) };
   }
 
   // ------------------------------------------------------ opciones del PDF
@@ -33575,7 +33579,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
   const EMPTY = {
     comitente: '', cuotapartista: '', denominacion: '', fecha_apertura: '', firma: '', titular_nombre: '', titular_dni: '',
     apellidos: '', nombres: '', sexo: '', fecha_nac: '', lugar_nac: '', nacionalidad: '', tipo_doc: '', dni: '', cuil: '', estado_civil: '',
-    conyuge_apellido: '', conyuge_nombre: '', conyuge_dni: '',
+    conyuge_apellido: '', conyuge_nombre: '', conyuge_tipo_doc: '', conyuge_dni: '',
     domicilio: '', localidad: '', provincia: '', pais: '', cp: '', tel_cel: '', tel_part: '', email: '',
     ocupacion: '', relacion: '', empresa: '', cargo: '', actividad_empresa: '', dom_laboral: '', loc_laboral: '', prov_laboral: '', pais_laboral: '', tel_laboral: '',
     iva: '', iigg: '', tipo_fiscal: '', res_ext: '', pais_ext: '', nit_ext: '', fatca: '', sujeto_obligado: '', pep: '', pep_motivo: '', pep_autoridad: '', pep_pj: '',
@@ -33616,7 +33620,10 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     V.cuil = digits(r.cuil) || clean(r.cuil);
     V.estado_civil = capFirst(lower(r.estado_civil) ? clean(r.estado_civil).toLowerCase() : '');
     V.conyuge_apellido = smartCase(r.conyuge_apellido); V.conyuge_nombre = smartCase(r.conyuge_nombre);
-    V.conyuge_dni = digits(r.conyuge_dni) || clean(r.conyuge_dni);
+    put('conyuge_tipo_doc', mapTipoDoc(r.conyuge_tipo_doc), r.conyuge_tipo_doc);
+    V.conyuge_dni = V.conyuge_tipo_doc === 'D.N.I.' ? (digits(r.conyuge_dni) || clean(r.conyuge_dni)) : clean(r.conyuge_dni);
+    // La etiqueta explícita «DNI del cónyuge» identifica el tipo, sin adivinarlo por el número.
+    if (!V.conyuge_tipo_doc && r.conyuge_dni && !r.conyuge_tipo_doc && parsed.spouseDNI) V.conyuge_tipo_doc = 'D.N.I.';
 
     V.domicilio = clean(r.domicilio); V.localidad = mapCABA(r.localidad); V.provincia = mapCABA(r.provincia);
     V.pais = clean(r.pais) || 'Argentina'; V.cp = clean(r.cp);
@@ -33670,6 +33677,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
 
   // ------------------------------------------------------- definición de campos
   const casado = V => /casad/.test(lower(V.estado_civil));
+  const necesitaConyuge = V => casado(V) || ['conyuge_apellido', 'conyuge_nombre', 'conyuge_tipo_doc', 'conyuge_dni'].some(k => clean(V[k]));
   const esEmpleado = V => V.relacion === 'Sí' || V.ocupacion === 'Empleado';
   const trabaja = V => !!(V.ocupacion && !noTrabaja(V.ocupacion));
 
@@ -33695,10 +33703,11 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       { k: 'cuil', l: 'CUIL o CUIT', req: true, ph: '11 dígitos' },
       { k: 'estado_civil', l: 'Estado civil', req: true, list: ['Soltero', 'Soltera', 'Casado', 'Casada', 'Divorciado', 'Divorciada', 'Viudo', 'Viuda'] }
     ] },
-    { id: 'conyuge', title: 'Cónyuge', show: casado, fields: [
-      { k: 'conyuge_apellido', l: 'Apellido del cónyuge', req: casado, w: 2 },
-      { k: 'conyuge_nombre', l: 'Nombre del cónyuge', req: casado },
-      { k: 'conyuge_dni', l: 'DNI del cónyuge', req: casado }
+    { id: 'conyuge', title: 'Datos del cónyuge (si corresponde)', fields: [
+      { k: 'conyuge_apellido', l: 'Apellido del cónyuge', req: necesitaConyuge, w: 2 },
+      { k: 'conyuge_nombre', l: 'Nombre del cónyuge', req: necesitaConyuge, w: 2 },
+      { k: 'conyuge_tipo_doc', l: 'Tipo de documento del cónyuge', req: necesitaConyuge, type: 'select', opts: 'tipo_doc', w: 2 },
+      { k: 'conyuge_dni', l: 'Número de documento del cónyuge', req: necesitaConyuge, w: 2 }
     ] },
     { id: 'domicilio', title: 'Domicilio y contacto', fields: [
       { k: 'domicilio', l: 'Domicilio', req: true, w: 2 },
@@ -33809,7 +33818,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     }
     if (has('titular_dni') && !/^\d{7,8}$/.test(digits(V.titular_dni))) add('titular_dni', 'error', 'El DNI tiene que tener 7 u 8 dígitos.');
     if (V.firma === 'conjunta') add('firma', 'warn', 'Las cartas de alta dicen que el uso de la firma es indistinto.');
-    if (visible(FIELD_INDEX.conyuge_dni, V) && has('conyuge_dni') && !/^\d{7,8}$/.test(digits(V.conyuge_dni)))
+    if (V.conyuge_tipo_doc === 'D.N.I.' && has('conyuge_dni') && !/^\d{7,8}$/.test(digits(V.conyuge_dni)))
       add('conyuge_dni', 'error', 'El DNI tiene que tener 7 u 8 dígitos.');
     if (has('email') && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(V.email)) add('email', 'error', 'El email no parece válido.');
     for (const k of ['monto', 'ingresos', 'patrimonio']) if (has(k) && !parseAmount(V[k]).ok) add(k, 'error', 'No es un importe válido.');
@@ -33832,7 +33841,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     const X = b => (b ? 'X' : '');
     const dniFmt = V.tipo_doc === 'D.N.I.' ? fmtDNI(V.dni) : clean(V.dni);
     const cuilFmt = fmtCUIL(V.cuil);
-    const cas = casado(V), pep = V.pep === 'Sí', ext = V.res_ext === 'Sí';
+    const cas = necesitaConyuge(V), pep = V.pep === 'Sí', ext = V.res_ext === 'Sí';
     const amount = v => { const p = parseAmount(v); return p.ok ? '$ ' + p.value : clean(v); };
     const date = v => { const p = parseDate(v); return p.ok ? p.value : clean(v); };
     return {
@@ -33846,7 +33855,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       domicilio: clean(V.domicilio), localidad: clean(V.localidad), provincia: clean(V.provincia), pais: clean(V.pais), cp: clean(V.cp),
       tel_part: clean(V.tel_part), tel_cel: clean(V.tel_cel), email: clean(V.email),
       conyuge_apellido: cas ? clean(V.conyuge_apellido) : '', conyuge_nombre: cas ? clean(V.conyuge_nombre) : '',
-      conyuge_tipo: cas && clean(V.conyuge_dni) ? 'D.N.I.' : '', conyuge_dni: cas ? fmtDNI(V.conyuge_dni) : '',
+      conyuge_tipo: cas ? V.conyuge_tipo_doc : '', conyuge_dni: cas ? (V.conyuge_tipo_doc === 'D.N.I.' ? fmtDNI(V.conyuge_dni) : clean(V.conyuge_dni)) : '',
       ocupacion: clean(V.ocupacion), empresa: clean(V.empresa), cargo: clean(V.cargo), actividad_empresa: clean(V.actividad_empresa),
       dom_laboral: clean(V.dom_laboral), loc_laboral: clean(V.loc_laboral), prov_laboral: clean(V.prov_laboral),
       pais_laboral: clean(V.pais_laboral), tel_laboral: clean(V.tel_laboral),

@@ -32,3 +32,11 @@ python3 tests/import_smoke.py
 ```
 
 Se puede ajustar `BALANZ_TEST_URL` y `CHROMIUM_PATH`. Las pruebas generan documentos sintéticos en una carpeta temporal: campos de PDF, PDF aplanado, OCR de imagen/escaneo, revisión, conservación de datos existentes, archivos inválidos y cancelación. También verifican nombre y DNI en las páginas 1 y 20 del PDF generado. No usan datos de clientes.
+
+La sección de cónyuge está siempre visible e incluye apellido, nombre, tipo y número de documento. Es opcional cuando no corresponde, y se exige completa si el estado civil es casado/a o se empieza a cargar alguno de sus datos. El tipo de documento se recupera del PDF o de una etiqueta explícita en el mail; no se supone DNI por tener un número. La generación conserva estos datos en las páginas 1 y 20 aunque todavía falte indicar el estado civil.
+
+Regresión específica del cónyuge:
+
+```sh
+python3 tests/spouse_smoke.py
+```
