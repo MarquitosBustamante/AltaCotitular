@@ -34220,6 +34220,54 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
     }
   }
 
+  // DocuSign no admite entradas vacías en la lista de un desplegable.
+  // Se conservan las opciones reales y el campo puede seguir sin responder.
+  function removeBlankPdfOptions(PDFLib, doc) {
+    const { PDFName, PDFDict, PDFArray, PDFString, PDFHexString } = PDFLib;
+    const name = PDFName.of;
+    const acro = doc.catalog.lookupMaybe(name('AcroForm'), PDFDict);
+    const fields = acro?.lookupMaybe(name('Fields'), PDFArray);
+    if (!fields) return;
+    const blank = value => (value instanceof PDFString || value instanceof PDFHexString) && !value.decodeText().replace(/[\s\u200B\uFEFF]/g, '');
+    const visited = new Set();
+    function walk(ref, inheritedType) {
+      const dict = doc.context.lookup(ref);
+      if (!(dict instanceof PDFDict) || visited.has(dict)) return;
+      visited.add(dict);
+      const type = dict.get(name('FT'))?.toString() || inheritedType;
+      const options = type === '/Ch' ? dict.lookupMaybe(name('Opt'), PDFArray) : null;
+      if (options) {
+        const keep = [], indices = new Map();
+        for (let i = 0; i < options.size(); i++) {
+          const option = options.lookup(i);
+          const empty = option instanceof PDFArray ? option.asArray().some(v => blank(doc.context.lookup(v))) : blank(option);
+          if (!empty) { indices.set(i, keep.length); keep.push(options.get(i)); }
+        }
+        if (keep.length !== options.size()) {
+          dict.set(name('Opt'), doc.context.obj(keep));
+          for (const key of ['V', 'DV']) {
+            const value = dict.lookup(name(key));
+            if (blank(value)) dict.delete(name(key));
+            else if (value instanceof PDFArray) {
+              const values = value.asArray().filter(v => !blank(doc.context.lookup(v)));
+              if (values.length) dict.set(name(key), doc.context.obj(values));
+              else dict.delete(name(key));
+            }
+          }
+          const selected = dict.lookupMaybe(name('I'), PDFArray);
+          if (selected) {
+            const mapped = selected.asArray().map(v => indices.get(doc.context.lookup(v).asNumber())).filter(i => i !== undefined);
+            if (mapped.length) dict.set(name('I'), doc.context.obj(mapped));
+            else dict.delete(name('I'));
+          }
+        }
+      }
+      const kids = dict.lookupMaybe(name('Kids'), PDFArray);
+      if (kids) kids.asArray().forEach(child => walk(child, type));
+    }
+    fields.asArray().forEach(ref => walk(ref));
+  }
+
   async function buildPdf(PDFLib, templateBytes, layout, V, letters) {
     const { PDFDocument, StandardFonts, rgb, PDFName } = PDFLib;
     const doc = await PDFDocument.load(templateBytes);
@@ -34258,6 +34306,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       };
       for (const L of letters) drawLetter(doc, L, D, F, rgb);
     }
+    removeBlankPdfOptions(PDFLib, doc);
     return doc.save({ updateFieldAppearances: false });
   }
 
@@ -34362,6 +34411,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
       };
       for (const L of letters) drawLetter(doc, L, D, F, rgb);
     }
+    removeBlankPdfOptions(PDFLib, doc);
     return doc.save();
   }
 
@@ -34378,7 +34428,7 @@ CmVuZG9iagpzdGFydHhyZWYKMjkzNjY3NQolJUVPRgo=</script>
   }
 
   global.AltaCore = {
-    parseText, buildState, emptyState, validate, pdfValues, valueFor, buildPdf, fileName,
+    parseText, buildState, emptyState, validate, pdfValues, valueFor, buildPdf, fileName, removeBlankPdfOptions,
     BLANK_SECTIONS, BLANK_INDEX, emptyBlank, validateBlank, buildBlankPdf, blankFileName,
     SECTIONS, FIELD_INDEX, OPTIONS, OCUPACIONES, visible, isOn, SIGN_ANCHOR, SIGN_SPOTS,
     _test: { longDate, wrapText, parseDate, parseAmount, cuilCheck, fmtCUIL, fmtDNI, normLabel, preprocess, smartCase, safeText }

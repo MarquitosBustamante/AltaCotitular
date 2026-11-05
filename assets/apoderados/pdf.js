@@ -89,6 +89,7 @@
       }
     }
     removeAnsweredFields(doc,PDFLib,answered);
+    window.AltaCore.removeBlankPdfOptions(PDFLib,doc);
     return doc.save({updateFieldAppearances:false});
   }
   window.ApoderadosPDF={build};
